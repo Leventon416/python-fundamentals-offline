@@ -1,0 +1,28 @@
+appId: com.pythonjourney.offline
+productName: Python Fundamentals - Offline
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - '!**/*.map'
+extraResources:
+  - from: out/renderer/pyodide
+    to: pyodide
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Python Fundamentals
+  artifactName: '${productName}-${version}-nsis-${arch}.${ext}'
+portable:
+  artifactName: '${productName}-Portable-${version}.${ext}'

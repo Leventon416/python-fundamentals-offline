@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Python Fundamentals - Offline</title>
+    <!-- Strict offline Content Security Policy: allows only local scripts, styles, and assets -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' app: file:; script-src 'self' app: file: 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval'; style-src 'self' app: file: 'unsafe-inline'; img-src 'self' app: file: data: blob:; font-src 'self' app: file: data:; connect-src 'self' app: file: ws:; object-src 'none'; base-uri 'self';"
+    />
+  </head>
+  <body
+    class="bg-coddy-dark text-slate-100 antialiased min-h-screen selection:bg-emerald-500/30 selection:text-emerald-300"
+  >
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
