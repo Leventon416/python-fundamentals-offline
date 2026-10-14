@@ -1,4 +1,5 @@
 import { loadPyodide, type PyodideInterface } from 'pyodide'
+import { cleanPythonError } from '../lib/errorUtils'
 
 let pyodide: PyodideInterface | null = null
 let isInitializing = false
@@ -89,8 +90,9 @@ self.onmessage = async (event: MessageEvent): Promise<void> => {
         }
       })
 
-      // Run user Python code asynchronously
-      await py.runPythonAsync(code)
+      // Run user Python code asynchronously, naming the file "main.py" so
+      // tracebacks reference "main.py" rather than "<exec>"
+      await py.runPythonAsync(code, { filename: 'main.py' })
 
       const executionTimeMs = Math.max(1, Math.round(performance.now() - startTime))
       const stdout = stdoutLines.join('\n')
@@ -106,9 +108,12 @@ self.onmessage = async (event: MessageEvent): Promise<void> => {
       const errorName = errorObj.name || 'PythonError'
       const rawMessage = errorObj.message || String(err)
 
-      // Clean up stack trace if needed, presenting readable Python exception
-      const stderr =
+      // Combine any batched stderr with the exception message, then strip
+      // Pyodide internals so only user-relevant frames are shown.
+      const combined =
         stderrLines.length > 0 ? `${stderrLines.join('\n')}\n${rawMessage}` : rawMessage
+
+      const stderr = cleanPythonError(combined)
 
       self.postMessage({
         type: 'ERROR',

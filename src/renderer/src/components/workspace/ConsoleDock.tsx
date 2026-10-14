@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { TestCase, TestResult } from '../../types/curriculum'
 import { cn } from '../../lib/utils'
+import { cleanPythonError, getPythonErrorTitle } from '../../lib/errorUtils'
 
 export interface ConsoleLog {
   id: string
@@ -170,10 +171,10 @@ export const ConsoleDock: React.FC<ConsoleDockProps> = ({
                       <div className="rounded-lg border border-rose-500/40 bg-rose-950/30 p-3 text-rose-300">
                         <div className="flex items-center space-x-1.5 text-[11px] font-bold text-rose-400 mb-1">
                           <AlertTriangle className="h-3.5 w-3.5" />
-                          <span>Python Error Trace</span>
+                          <span>{getPythonErrorTitle(item.text)}</span>
                         </div>
                         <pre className="whitespace-pre-wrap font-mono text-xs text-rose-200">
-                          {item.text}
+                          {cleanPythonError(item.text)}
                         </pre>
                       </div>
                     ) : item.type === 'info' ? (
@@ -393,7 +394,7 @@ export const ConsoleDock: React.FC<ConsoleDockProps> = ({
                             </p>
                             {res.errorMessage && (
                               <div className="mt-2 text-rose-300 font-mono text-xs bg-rose-950/40 p-2 rounded border border-rose-500/30">
-                                Exception: {res.errorMessage}
+                                Exception: {cleanPythonError(res.errorMessage)}
                               </div>
                             )}
                           </div>
@@ -415,7 +416,7 @@ export const ConsoleDock: React.FC<ConsoleDockProps> = ({
                                 <span>Actual Output</span>
                               </div>
                               <pre className="whitespace-pre-wrap font-mono text-xs text-rose-200">
-                                {res.actual || '(no output)'}
+                                {cleanPythonError(res.actual) || '(no output)'}
                               </pre>
                             </div>
                           </div>
