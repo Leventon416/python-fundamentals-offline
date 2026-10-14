@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { getAllLessons, getLessonById, getNextLesson } from '../data/curriculum'
+import { Lesson } from '../types/curriculum'
 
 export interface CourseState {
   // Persistent State
@@ -78,11 +79,204 @@ function calculateStreak(
 }
 
 /**
+ * Normalizes code by stripping Python comments (# ...), normalized newlines, and all whitespace.
+ */
+function normalizePythonCode(code: string | undefined): string {
+  if (!code) return ''
+  return code.replace(/#.*$/gm, '').replace(/\\n/g, '\n').replace(/\s+/g, '').trim()
+}
+
+/**
+ * Known obsolete variables and snippets from legacy / pre-release curriculum builds.
+ */
+const KNOWN_LEGACY_OBSOLETE_PATTERNS = [
+  'item_price',
+  'tax_rate',
+  'customer_name',
+  'sum_val',
+  'diff_val',
+  'prod_val',
+  'quot_val',
+  'can_access',
+  'is_locked',
+  'has_key',
+  'is_admin'
+]
+
+/**
+ * Extracts all identifiers expected by a lesson (e.g. from test cases, expected variables, semantic constraints, function names).
+ */
+function getLessonExpectedIdentifiers(lesson: Lesson): string[] {
+  const ids = new Set<string>()
+
+  if (Array.isArray(lesson.testCases)) {
+    for (const tc of lesson.testCases) {
+      if (tc.variableName) ids.add(tc.variableName)
+      if (tc.functionName) ids.add(tc.functionName)
+      if (tc.expectedVariables) {
+        Object.keys(tc.expectedVariables).forEach((k) => ids.add(k))
+      }
+      if (Array.isArray(tc.semanticConstraints)) {
+        for (const sc of tc.semanticConstraints) {
+          if (sc.target) ids.add(sc.target)
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(lesson.steps)) {
+    for (const step of lesson.steps) {
+      if (step.type === 'code_task' && Array.isArray(step.testCases)) {
+        for (const tc of step.testCases) {
+          if (tc.variableName) ids.add(tc.variableName)
+          if (tc.functionName) ids.add(tc.functionName)
+          if (tc.expectedVariables) {
+            Object.keys(tc.expectedVariables).forEach((k) => ids.add(k))
+          }
+          if (Array.isArray(tc.semanticConstraints)) {
+            for (const sc of tc.semanticConstraints) {
+              if (sc.target) ids.add(sc.target)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return Array.from(ids)
+}
+
+/**
+ * Checks if saved code has legacy identifiers that do not belong to this lesson.
+ */
+function hasLegacyMismatch(lesson: Lesson, savedCode: string): boolean {
+  if (lesson.id === 'lesson-2-2') {
+    if (
+      savedCode.includes('item_price') ||
+      savedCode.includes('tax_rate') ||
+      savedCode.includes('19.99') ||
+      savedCode.includes('0.08')
+    ) {
+      return true
+    }
+  }
+  if (lesson.id === 'lesson-2-1' && savedCode.includes('customer_name')) return true
+  if (
+    lesson.id === 'lesson-2-3' &&
+    (savedCode.includes('is_active') || savedCode.includes('is_game_over'))
+  ) {
+    return true
+  }
+  if (
+    lesson.id === 'lesson-3-1' &&
+    (savedCode.includes('sum_val') || savedCode.includes('diff_val'))
+  ) {
+    return true
+  }
+  if (
+    lesson.id === 'lesson-5-3' &&
+    (savedCode.includes('can_access') ||
+      savedCode.includes('has_key') ||
+      savedCode.includes('is_admin') ||
+      savedCode.includes('is_locked'))
+  ) {
+    return true
+  }
+  if (
+    lesson.id.startsWith('lesson-8-') &&
+    (savedCode.includes('def add(') || savedCode.includes('def is_even('))
+  ) {
+    return true
+  }
+
+  const expectedIds = getLessonExpectedIdentifiers(lesson)
+  for (const legacyId of KNOWN_LEGACY_OBSOLETE_PATTERNS) {
+    if (savedCode.includes(legacyId) && !expectedIds.includes(legacyId)) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Detects whether a cached code draft for an uncompleted lesson represents:
+ * 1. The full current solution (exact match, trimmed match, or comment-stripped normalized match).
+ * 2. Any solution across the entire curriculum.
+ * 3. A known legacy / obsolete pre-filled solution from previous builds (e.g. item_price in 2.2).
+ * 4. Stale code that doesn't mention any of the lesson's target variables or objectives.
+ */
+export function isInvalidOrPreFilledDraft(lesson: Lesson, savedCode: string | undefined): boolean {
+  if (savedCode === undefined || savedCode === null) return true
+  if (typeof savedCode !== 'string') return true
+
+  const trimmedSaved = savedCode.trim()
+  if (!trimmedSaved) return false
+
+  // If it's an exact match to the clean starterCode, it's valid starterCode
+  if (trimmedSaved === lesson.starterCode.trim()) return false
+
+  const normSaved = normalizePythonCode(savedCode)
+  const normStarter = normalizePythonCode(lesson.starterCode)
+  if (normSaved === normStarter) return false
+
+  // 1. Matches this lesson's solutionCode
+  if (lesson.solutionCode) {
+    if (trimmedSaved === lesson.solutionCode.trim()) return true
+    const normSolution = normalizePythonCode(lesson.solutionCode)
+    if (normSolution.length > 0 && normSaved === normSolution) return true
+    if (normSolution.length > 15 && normSaved.includes(normSolution)) return true
+  }
+
+  // 2. Matches ANY lesson's solutionCode across the curriculum
+  const allLessons = getAllLessons()
+  const matchesAnySolution = allLessons.some((l) => {
+    if (!l.solutionCode) return false
+    const norm = normalizePythonCode(l.solutionCode)
+    return norm.length > 10 && normSaved === norm
+  })
+  if (matchesAnySolution) return true
+
+  // 3. Known legacy solution patterns
+  if (hasLegacyMismatch(lesson, savedCode)) {
+    return true
+  }
+
+  // Specific legacy per-lesson known pre-filled solutions
+  if (lesson.id === 'lesson-1-3' && savedCode.includes('score = 12')) return true
+  if (
+    lesson.id === 'lesson-1-5' &&
+    (savedCode.includes('level = 2') || savedCode.includes('level = 5'))
+  ) {
+    return true
+  }
+  if (lesson.id === 'lesson-2-1' && savedCode.includes('Arthur') && savedCode.includes('42')) {
+    return true
+  }
+
+  // 4. Semantic relevance check:
+  // If the lesson specifies expected identifiers (e.g. ['distance_miles', 'pace_minutes']),
+  // and the savedCode contains assignment operations (=) or function definitions (def),
+  // but mentions NONE of the expected identifiers or starterCode variables:
+  const expectedIds = getLessonExpectedIdentifiers(lesson)
+  if (expectedIds.length > 0) {
+    const hasAnyExpected = expectedIds.some((id) => savedCode.includes(id))
+    if (!hasAnyExpected) {
+      const hasAssignments = /^[a-zA-Z_][a-zA-Z0-9_]*\s*=/m.test(savedCode)
+      const hasDefs = /def\s+[a-zA-Z_]/m.test(savedCode)
+      if (hasAssignments || hasDefs) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+/**
  * Sanitizes cached savedCode drafts:
- * - Compares savedCode[lessonId] against lesson.solutionCode.
- * - If savedCode[lessonId] exactly matches lesson.solutionCode AND the lesson is NOT marked completed,
- *   overwrites savedCode[lessonId] with the clean lesson.starterCode.
- * - Also handles legacy pre-filled solutions (e.g. for lesson-2-1 if previously saved).
+ * - Removes orphaned keys that don't match any valid lesson ID.
+ * - Replaces any pre-filled or legacy solution in uncompleted lessons with the clean lesson.starterCode.
+ * - Replaces obsolete legacy code in completed lessons with lesson.solutionCode.
  */
 export function sanitizeSavedCode(
   savedCode: Record<string, string>,
@@ -90,22 +284,28 @@ export function sanitizeSavedCode(
 ): Record<string, string> {
   if (!savedCode || typeof savedCode !== 'object') return {}
   const allLessons = getAllLessons()
-  const sanitized = { ...savedCode }
+  const validLessonIds = new Set(allLessons.map((l) => l.id))
+  const sanitized: Record<string, string> = {}
+
+  for (const [key, value] of Object.entries(savedCode)) {
+    if (validLessonIds.has(key)) {
+      sanitized[key] = value
+    }
+  }
 
   for (const lesson of allLessons) {
     const saved = sanitized[lesson.id]
     if (saved === undefined) continue
 
     const isCompleted = completedLessonIds.includes(lesson.id)
-    if (isCompleted) continue
+    if (isCompleted) {
+      if (hasLegacyMismatch(lesson, saved)) {
+        sanitized[lesson.id] = lesson.solutionCode
+      }
+      continue
+    }
 
-    const exactMatch = Boolean(lesson.solutionCode) && saved === lesson.solutionCode
-    const trimmedMatch = Boolean(lesson.solutionCode) && saved.trim() === lesson.solutionCode.trim()
-    const isLegacyLesson21Solution =
-      lesson.id === 'lesson-2-1' &&
-      (saved.includes('customer_name') || saved.includes('character_name'))
-
-    if (exactMatch || trimmedMatch || isLegacyLesson21Solution) {
+    if (isInvalidOrPreFilledDraft(lesson, saved)) {
       sanitized[lesson.id] = lesson.starterCode
     }
   }
@@ -292,17 +492,17 @@ export const useCourseStore = create<CourseState>()(
         const saved = state.savedCode[lessonId]
         const lesson = getLessonById(lessonId)
 
-        // Runtime check: if cached code matches solution code for uncompleted lesson, return clean starterCode
+        // Runtime check: if cached code matches solution code or legacy draft for uncompleted lesson, return clean starterCode
         if (lesson && !state.completedLessonIds.includes(lessonId)) {
-          const exactMatch = Boolean(lesson.solutionCode) && saved === lesson.solutionCode
-          const trimmedMatch =
-            Boolean(lesson.solutionCode) && saved?.trim() === lesson.solutionCode.trim()
-          const isLegacyLesson21Solution =
-            lessonId === 'lesson-2-1' &&
-            Boolean(saved) &&
-            (saved.includes('customer_name') || saved.includes('character_name'))
-
-          if (exactMatch || trimmedMatch || isLegacyLesson21Solution) {
+          if (isInvalidOrPreFilledDraft(lesson, saved)) {
+            if (saved !== lesson.starterCode) {
+              set((s) => ({
+                savedCode: {
+                  ...s.savedCode,
+                  [lessonId]: lesson.starterCode
+                }
+              }))
+            }
             return lesson.starterCode
           }
         }
@@ -348,7 +548,15 @@ export const useCourseStore = create<CourseState>()(
     }),
     {
       name: 'python-journey-course-storage',
+      version: 1,
       storage: createJSONStorage(() => localStorage),
+      migrate: (persistedState: unknown, version: number) => {
+        const state = (persistedState || {}) as Partial<CourseState>
+        if (version < 1) {
+          state.savedCode = sanitizeSavedCode(state.savedCode || {}, state.completedLessonIds || [])
+        }
+        return state as CourseState
+      },
       merge: (persistedState, currentState) => {
         const merged = {
           ...currentState,
