@@ -70,8 +70,8 @@ A high-performance, completely offline desktop learning environment inspired by 
 ### 1. Installation
 Clone the repository and install all dependencies:
 ```bash
-git clone https://github.com/<your-username>/learning-python.git
-cd "learning python"
+git clone https://github.com/Leventon416/python-fundamentals-offline.git
+cd python-fundamentals-offline
 npm install
 ```
 
